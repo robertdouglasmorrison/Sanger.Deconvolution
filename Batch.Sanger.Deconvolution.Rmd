@@ -1,0 +1,214 @@
+---
+author: "Robert Morrison, LMIV/NIAID/NIH"
+date: "Version 1.0, as run on `r format(Sys.time(), '%B %d, %Y  %I:%M %p')`"
+output: html_document
+params: 
+    set_file: ""
+    set_gene: ""
+title: "Batch Deconvolution of Sanger Chromatograms to Quantify Allelic Mutations"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+# needed packages
+require( rstudioapi)
+require(DuffyTools)
+# allow optional use of DT::datatable instead of default kable.  Comment out at bottom as wanted...
+require(DT)
+
+# local callable function to do the final rendering to HTML, that sets the filename dynamically
+render_batch <- function( file) {
+  # turn the batch file name into the name for the result HTML
+  fname <- basename(file)
+  fout <- paste( fname, 'Batch.Results.html', sep='.')
+  rmarkdown::render(
+    input = "Batch.Sanger.Deconvolution.Rmd",
+    output_file = fout,
+    envir=.GlobalEnv
+  )
+}
+
+# prompt the user interactively for one batch CSV file of data to process, when not rendering
+if ( ! isTRUE(getOption('knitr.in.progress'))) {
+  showDialog( title="Select a file of Chromatogram filenames and target genes to process as a batch", message="Select one CSV Batch file for Deconvolution Analysis")
+  batchFile <- selectFile( caption="Select batch file", filter="CSV Files (*.csv)", existing=T,
+                         path=if(exists("last.Batch.path")) last.Batch.path else getActiveProject())
+}
+if ( is.null( batchFile)) stop( "No batch file selected")
+last.Batch.path <- dirname(batchFile)
+
+# set all defined mutation site motifs per each possible gene of interest
+# each mutation site is specified as an ~11 amino acids of sequence context with the single residue of interest at the exact center
+DHPS_MOTIF_SET <- c( "I431V"="ASVIDIGGESS", "S436F"="IGGESSGPFVI", "G437A"="GGESSGPFVIP", "K540E"="PHTMDKLTNYD", 
+                     "A581G"="IGLGFAKKHDQ", "A613S"="RKRFIAHCMND")
+DHFR_MOTIF_SET <- c( "A16V"="IYAICACCKVE", "C50R"="VLPWKCNSLDM", "N51I"="LPWKCNSLDMK", "C59R"="DMKYFCAVTTY", 
+                     "S108N"="VMGRTSWESIP", "V140L"="DFDEDVYIINK", "I164L"="YKCFIIGGSVV")
+CRT_MOTIF_SET <- c( "K76T"="VCVMNKIFAKR", "T76T"="VCVIETIFAKR")
+MDR_MOTIF_SET <- c( "N86Y"="ILKNMNLGDDI", "Y184F"="SFLGLYIWSLI")
+CYTB_MOTIF_SET <- c( "Y268S"="YFLPFYAMLKT")
+
+# set the expected in-frame reference DNA sequence for each gene of interest
+DHPS_REF_DNA <- "ATTGTTGGAATATTAAATGTTAATTATGATTCTTTTTCAGATGGAGGTATTTTTGTTGAACCTAAACGTGCTGTTCAAAGAATGTTTGAAATGATAAATGAAGGTGCTAGTGTTATAGATATAGGTGGAGAATCCTCTGGTCCTTTTGTTATACCTAATCCAAAAATTAGTGAAAGAGATTTAGTAGTACCTGTATTACAATTATTTCAAAAAGAATGGAATGATATAAAAAATAAAATTGTTAAATGTGATGCGAAACCAATTATAAGTATTGATACAATTAACTATAATGTTTTTAAAGAATGTGTTGATAATGATTTAGTTGATATATTAAATGATATTAGTGCTTGTACAAATAATCCAGAAATTATAAAATTATTAAAAAAAAAAAACAAATTCTATAGTGTAGTTCTAATGCATAAAAGAGGAAATCCACATACAATGGATAAACTAACAAATTATGATAATCTAGTTTATGATATAAAAAATTATTTAGAACAAAGATTAAATTTTCTTGTATTAAATGGAATACCTCGTTATAGGATACTATTTGATATTGGATTAGGATTTGCGAAGAAACATGATCAATCTATTAAACTCTTACAAAATATACATGTATATGATGAGTATCCACTTTTTATTGGATATTCAAGAAAAAGATTTATTGCCCATTGCATGAATGATCAAAATGTTGTAATAAATACACAACAAAAATTACATGATGAACAACAAAATGAAAATAAAAATATTGTGGACAAATCACACAATTGGATGTTTCAGATGAATTACATGAGGAAAGACAAGGATCAACTTTTATATCAAAAAAATATATGTGGTGGATTAGCAATTGCTTCCTACAGCTATTATAAAAAGGTAGATCTAATAAGAGTTCATGACGTTTTAGAAACAAAATCGGTTTTGGATGTTTTAACAAAAATAGACCAAGTGTAA"
+DHFR_REF_DNA <- "ATGATGGAACAAGTCTGCGACGTTTTCGATATTTATGCCATATGTGCATGTTGTAAGGTTGAAAGCAAAAATGAGGGGAAAAAAAATGAGGTTTTTAATAACTACACATTTAGAGGTCTAGGAAATAAAGGAGTATTACCATGGAAATGTAATTCCCTAGATATGAAATATTTTTGTGCAGTTACAACATATGTGAATGAATCAAAATATGAAAAATTGAAATATAAGAGATGTAAATATTTAAACAAAGAAACTGTGGATAATGTAAATGATATGCCTAATTCTAAAAAATTACAAAATGTTGTAGTTATGGGAAGAACAAGCTGGGAAAGCATTCCAAAAAAATTTAAACCTTTAAGCAATAGGATAAATGTTATATTGTCTAGAACCTTAAAAAAAGAAGATTTTGATGAAGATGTTTATATCATTAACAAAGTTGAAGATCTAATAGTTTTACTTGGGAAATTAAATTACTATAAATGTTTTATTATAGGAGGTTCCGTTGTTTATCAAGAATTTTTAGAAAAGAAATTAATAAAAAAAATATATTTTACTAGAATAAATAGTACATATGAATGTGATGTATTTTTTCCAGAAATAAATGAAAATGAGTATCAAATTATTTCTGTTAGCGATGTATATACTAGTAACAATACAACATTGGATTTTATCATTTATAAGAAAACGAATAATAAAATGTTAAATGAACAAAATTGTATAAAAGGAGAAGAAAAAAATAATGATATGCCTTTAAAGAATGATGACAAAGATACATGTCATATGAAAAAATTAACAGAATTTTACAAAAATGTAGACAAATATAAAATTAATTATGAAAATGATGATGATGATGAAGAAGAAGATGATTTTGTTTATTTTAATTTTAATAAAGAAAAAGAAGAGAAAAATAAAAATTCTATACATCCAAATGATTTTCAAATATATAATAGCTTGAAATATAAATATCATCCTGAATACCAATATTTAAATATTATTTATGATATTATGATGAATGGAAATAAACAAAGTGATCGAACGGGAGTAGGTGTTTTAAGTAAATTCGGATATATTATGAAATTTGATTTAAGTCAATATTTCCCATTATTAACTACGAAGAAATTATTTTTAAGAGGAATTATTGAAGAATTGCTTTGGTTTATTAGAGGAGAAACAAATGGTAATACGTTGTTAAATAAGAATGTAAGGATATGGGAAGCTAATGGTACTAGGGAATTTTTAGATAATAGAAAATTATTTCATAGAGAAGTTAACGATTTAGGACCTATTTATGGTTTTCAATGGAGACATTTCGGTGCTGAATATACAAATATGTATGATAATTATGAAAATAAAGGAGTGGATCAATTAAAAAATATAATAAATTTAATTAAAAATGATCCTACAAGTAGAAGAATTCTTTTGTGTGCATGGAATGTAAAAGATCTTGACCAAATGGCATTACCTCCTTGTCATATTTTATGTCAGTTTTATGTTTTCGATGGGAAATTATCATGTATTATGTATCAAAGATCATGTGATTTAGGGCTAGGAGTACCTTTTAATATTGCTTCTTATTCTATTTTTACTCATATGATTGCACAAGTCTGTAATTTGCAACCTGCGCAGTTCATACACGTTTTAGGAAATGCACATGTTTATAATAATCACATTGATAGTTTAAAAATTCAACTTAACAGAATACCCTATCCATTCCCAACACTTAAATTAAATCCAGATATTAAAAATATTGAAGATTTTACAATTTCGGATTTTACAATACAAAATTATGTTCATCATGAAAAAATTTCAATGGATATGGCTGCTTAA"
+CRT_REF_DNA <- "GGCTCACGTTTAGGTGGAGGTTCTTGTCTTGGTAAATGTGCTCATGTGTTTAAACTTATTTTTAAAGAGATTAAGGATAATATTTTTATTTATATTTTAAGTATTATTTATTTAAGTGTATGTGTAATGAATAAAATTTTTGCTAAAAGAACTTTAAACAAAATTGGTAACTATAGTTTTGTAACATCCGAAACTCACAACTTTATTTGTATGATTATGTTCTTTATTGTTTATTCCTTATTTGGAAATAAAAAGGGAAATTCAAAA"
+MDR_REF_DNA <- "ATGGGTAAAGAGCAGAAAGAGAAAAAAGATGGTAACCTCAGTATCAAAGAAGAGGTTGAAAAAGAGTTGAACAAAAAGAGTACCGCTGAATTATTTAGAAAAATAAAGAATGAGAAAATATCATTTTTTTTACCGTTTAAATGTTTACCTGCACAACATAGAAAATTATTATTTATATCATTTGTATGTGCTGTATTATCAGGAGGAACATTACCTTTTTTTATATCTGTGTTTGGTGTAATATTAAAGAACATGAATTTAGGTGATGATATTAATCCTATAATATTATCATTAGTATCTATAGGTTTAGTACAATTTATATTATCAATGATATCAAGTTATTGTATGGATGTAATTACATCAAAAATATTAAAAACTTTAAAGCTTGAATATTTAAGAAGTGTTTTTTATCAAGATGGACAATTTCATGATAATAATCCTGGATCTAAATTAAGATCTGATTTAGATTTTTATTTAGAACAAGTGAGTTCAGGAATTGGTACGAAATTTATAACAATTTTTACATATGCCAGTTCCTTTTTAGGTTTATATATTTGGTCATTAATAAAAAATGCACGTTTGACTTTATGTATTACTTGCGTTTTTCCGTTAATTTATGTTTGTGGTGTCATATGTAATAAGAAAGTAAAATTAAATAAAAAAACATCTTTGTTATATAATAACAATACCATGTCCATTATAGAAGAGGCTTTAATGGGAATAAGAACTGTTGCAAGTTATTGTGGAGAAAAGACTATATTAAACAAATTTAATTTGTCCGAAACTTTTTATAGTAAATATATTTTAAAAGCTAATTTTGTAGAAGCATTACATATAGGTTTAATAAATGGTTTAATTTTAGTTTCTTATGCATTCGGTTTTTGGTATGGTACAAGAATTATTATAAATAGTGCAACGAATCAATACCCCAATAATGATTTTAATGGTGCCTCAGTTATATCCATTTTATTAGGTGTACTTATTAGTATGTTTATGTTAACAATTATCTTACCAAATATAACAGAATATATGAAAGCTTTAGAAGCAACAAATAGTTTATATGAAATAATAAATCGAAAACCATTAGTTGAAAATAATGATGATGGAGAAACATTACCAAATATTAAAAAAATTGAATTTAAAAATGTAAGATTTCATTATGATACTAGAAAAGATGTTGAAATTTATAAAGATTTAAGTTTTACTCTAAAAGAAGGGAAAACATATGCATTTGTGGGAGAATCAGGTTGTGGGAAATCAACCATACTAAAATTAATTGAAAGACTTTATGATCCAACCGAAGGAGATATTATTGTAAATGATTCTCATAATTTAAAAGATATTAATTTGAAATGGTGGAGATCAAAAATTGGAGTTGTTAGTCAAGATCCATTATTATTTAGTAATTCAATTAAAAATAATATTAAATATAGTTTATATAGTTTAAAAGATTTAGAAGCAATGGAAAATTATTATGAAGAAAATACTAATGATACATATGAAAATAAAAATTTTTCTTTAATTTCGAATTCTATGACATCAAATGAATTATTAGAAATGAAAAAAGAATATCAAACTATTAAAGATTCTGATGTTGTTG"
+CYTB_REF_DNA <- "ATGAACTTTTACTCTATTAATTTAGTTAAAGCACACTTAATAAATTACCCATGTCCATTGAACATAAACTTTTTATGGAATTACGGATTCCTTTTAGGAATAATATTTTTTATTCAAATTATAACAGGTGTATTTTTAGCAAGTCGATATACACCAGATGTTTCATATGCATATTATAGTATACAACACATTTTAAGAGAATTATGGAGTGGATGGTGTTTTAGATACATGCACGCAACAGGTGCTTCTCTTGTATTTTTATTAACATATCTTCATATTTTAAGAGGATTAAATTACTCATATATGTATTTACCATTATCATGGATATCTGGATTGATTTTATTTATGATATTTATTGTAACTGCTTTCGTTGGTTATGTCTTACCATGGGGTCAAATGAGTTATTGGGGTGCAACTGTAATTACTAACTTGTTATCCTCTATTCCAGTAGCAGTAATTTGGATATGTGGAGGATATACTGTGAGTGATCCTACAATAAAACGATTTTTTGTACTACATTTTATCTTACCATTTATTGGATTATGTATTGTATTTATACATATATTTTTCTTACATTTACATGGTAGCACAAATCCTTTAGGGTATGATACAGCATTAAAAATACCCTTTTATCCAAATCTATTAAGTCTTGATGTTAAAGGATTTAATAATGTTATAATTTTATTTCTAATACAAAGTTTATTTGGAATTATACCTTTATCACATCCTGATAATGCTATCGTAGTAAATACATATGTTACTCCATCTCAAATTGTACCTGAATGGTACTTTCTACCATTTTATGCAATGTTAAAAACTGTTCCAAGTAAACCAGCTGGTTTAGTAATTGTATTATTATCATTACAATTATTATTCTTATTAGCAGAACAAAGAAGTTTAACAACTATAATTCAATTTAAAATGATTTTTGGTGCTAGAGATTATTCTGTTCCTATTATATGGTTTATGTGTGCATTCTATGCTTTATTATGGATTGGATGTCAATTACCACAAGATATATTCATTTTATATGGTCGATTATTTATTGTATTATTTTTCTGTAGTGGTTTATTTGTACTTGTTCATTATAGACGAACACATTATGATTACAGCTCCCAAGCAAACATATAA"
+
+
+
+# local function to copy the gene specific data to the final objects for processing
+configureTargetGene <- function( targetGene) {
+  motifSet <<- NULL
+  if ( toupper(targetGene) == "DHPS") {
+   motifSet <<- DHPS_MOTIF_SET
+   REF_DNA <<- DHPS_REF_DNA
+  }
+  if ( toupper(targetGene) == "DHFR") {
+    motifSet <<- DHFR_MOTIF_SET
+    REF_DNA <<- DHFR_REF_DNA
+  }
+  if ( toupper(targetGene) == "CRT") {
+    motifSet <<- CRT_MOTIF_SET
+    REF_DNA <<- CRT_REF_DNA
+  }
+  if ( toupper(targetGene) == "MDR") {
+    motifSet <<- MDR_MOTIF_SET
+    REF_DNA <<- MDR_REF_DNA
+  }
+  if ( toupper(targetGene) == "CYTB") {
+    motifSet <<- CYTB_MOTIF_SET
+    REF_DNA <<- CYTB_REF_DNA
+  }
+  REF_AA <<- DNAtoAA( REF_DNA, readingFrames=1)
+  if ( is.null( motifSet)) stop( paste( "No pre-defined Gene of Interest matches target gene: ", targetGene, 
+                                        "Chech the Batch.Sanger.Deconvolution.Rmd source code."))
+  return(NULL)
+}
+
+# open the Batch file, and confirm needed columns
+batchTbl <- read.csv( batchFile, as.is=T)
+N_Chromo <- nrow(batchTbl)
+neededColumns <- c( "Chromatogram.File", "Target.Gene")
+sampleColumn <- grep( "ID|Sample", colnames(batchTbl))[1]
+if ( ! all( neededColumns %in% colnames(batchTbl))) {
+  cat( "\nSome required batch file column names not found.\nExpected: ", neededColumns, "\nFound: ", colnames(batchTbl))
+  stop( "Fix column names in batch file")
+}
+if ( ! is.na( sampleColumn)) {
+  cat( "\nFound a column to use as ID or Sample name for each chromatogram: ", colnames(batchTbl)[sampleColumn])
+  sampleName <- batchTbl[[ sampleColumn]]
+} else {
+  sampleName <- 1:nrow(batchTbl)
+}
+
+```
+
+
+### Batch File of Chromatograms to process: `r basename(batchFile)`  
+
+### Set of Genes of Interest: `r sort(unique( batchTbl$Target.Gene))`
+
+You have selected a batch file containing `r N_Chromo` chromatogram filenames.  
+
+---  
+
+## Deconvolution Methods
+
+Each mutation site of interest in each chromatogram will be investigated by a 3-step process:  
+
+1. Search for the 11aa mutation motif in all 6 possible reading frames of the chromatogram, to find the correct strand orientation and coding reading frame to align the chromatogram with the gene's protein coding sequence.  This step must be tolerant of both chromatogram noise and field isolate variation, so rather than expecting a perfect 11aa match, a similarity scoring method is used to find the one best matching location in all 6 reading frames.  If no high scoring match is found, the deconvolution quantification step fails.
+
+2. Isolate the center 3-nucleotide codon region of the motif, to extract the tiny chromatogram fragment corresponding to the single amino acid of interest.  This holds the raw trace matrix that describes the observed peak shapes and amplitudes in all 4 base call channels over the full period of 3 nucleotide peaks.  As each peak shape is typically measured at about 10 data points per nucleotide, this tiny trace matrix will contain roughly 30 rows by 4 columns of raw intensity call values. This tiny extracted chromatogram trace matrix becomes the observed data for the final peak fitting  step.
+
+3. Perform the deconvolution.  The observed tiny trace matrix is fitted by non-linear regression, using a simulated annealing algorithm (R package GenSA), as a weighted sum of all likely codons, where each possible codon is modeled as a tiny trace matrix of 3 gaussian peaks.  The fitting process calculates the relative abundance of all model codon trace matrices that best fits the observed trace matrix.  Lastly, each model codon of non-zero abundance is translated to its coding amino acid and proportionally summed, to give the final deconvolution result expressed as the relative proportions of one or more amino acids that best describe the observed chromatogram at that protein mutation site.
+
+---
+
+```{r process, echo=FALSE, warning=FALSE, error=FALSE}
+
+# ready to process all chromatograms in one giant batch
+# Accumulate the result for each
+out <- data.frame()
+
+# make one Failure answer, for any unfound motifs
+failAns <- data.frame( "Status"="FAIL", "Best_AA_Call"="", "Best_Codon"="", "Best_Percent"=NA, "Ref_Name"="", 
+                       "Ref_Percent"=NA, "Mutant_Name"="", "Mutant_Percent"=NA, "Confidence"=0, stringsAsFactors=F)
+
+for ( j in 1:N_Chromo) {
+  ab1File <- batchTbl$Chromatogram.File[j]
+  targetGene <- batchTbl$Target.Gene[j]
+  thisSample <- sampleName[j]
+  
+  # set up for this gene of interest
+  configureTargetGene( targetGene)
+  N_Motifs <- length( motifSet)
+
+  smallOut <- data.frame()
+  for ( i in 1:N_Motifs) {
+    # get the name and expected AAs for this mutation site
+    myMotif <- motifSet[i]
+    motifName <- names(motifSet)[i]
+	  nameLen <- nchar( motifName)
+	  refAA <- substr( motifName, 1,1)
+	  altAA <- substr( motifName, nameLen, nameLen)
+	
+    # step 1:  find the motif region in the full chromatogram
+    smallChromo <- motifSubsetChromatogram( ab1File, myMotif, gene=targetGene, referenceDNA=REF_DNA, 
+							        verbose=F, plot=F)
+  
+    # step 2: find the center codon in that motif
+    tinyChromo <- motifCodonChromatogram( smallChromo, myMotif, plot=F)
+
+    # step 3: do the nonlinear fit
+    if ( ! is.null( tinyChromo)) {
+      cat( "\nCalling GenSA Simulated Annealing fit algorithm..")
+      modelAns <- suppressMessages( modelFitOneCodon( tinyChromo, ref.AA=refAA, alt.AA=altAA, 
+                                                    min.percent=5.0, plot=F, verbose=F))
+    } else {
+      modelAns <- NULL
+    }
+    if ( is.null( modelAns)) modelAns <- failAns
+
+    # append this motif fit result
+    smallOut <- rbind( smallOut, data.frame( "Sample"=thisSample, Motif=motifName, modelAns, "AB1.File"=basename(ab1File), 
+                "AB1.Directory"=dirname(ab1File), stringsAsFactors=F))
+  }
+  # make a small summary of this chromatogram
+  nPass <- sum( smallOut$Status == "Pass")
+  nFail <- sum( toupper(smallOut$Status) == "FAIL")
+  pctPass <- round( nPass * 100 / N_Motifs)
+  cat( "\n",j,sampleName[j], " N_Pass:", nPass, " N_Fail:", nFail, " Pct_Pass:", pctPass, " File:", basename(ab1File))
+
+  out <- rbind( out, smallOut)
+}
+
+# set the file name for table of results
+csvFile <- paste( basename(batchFile), "Batch.Results.csv", sep=".")
+
+```
+
+----  
+
+## Table of Deconvolution Results  
+
+This table of results has been written to CSV file: `r csvFile`  
+
+```{r finalize, echo=FALSE, warning=FALSE, error=FALSE}
+
+# once all motif sites are done, show results and write results as CSV
+#knitr::kable( out, caption=paste( "Motif Search and Model Fit Results for batch file: ", batchFile))
+DT::datatable( out, caption=paste( "Motif Search and Model Fit Results for batch file: ", batchFile))
+
+write.csv( out, csvFile, row.names=F)
+
+# lastly, post this markdown run to HTML
+if ( ! isTRUE(getOption('knitr.in.progress'))) {
+  render_batch( batchFile)
+  htmlFile <- file.path( getwd(), paste( basename(batchFile), "Batch.Results.html", sep="."))
+  browseURL( htmlFile)
+}
+
+```
+
+### Done with batch processing of file `r batchFile` for `r N_Chromo` chromatograms.  
