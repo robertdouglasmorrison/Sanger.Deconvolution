@@ -12,8 +12,10 @@ title: "Deconvolution of Sanger Chromatograms to Quantify Resistance Mutations"
 knitr::opts_chunk$set(echo = FALSE)
 
 # needed packages
-require( rstudioapi)
-require(DuffyTools)
+library( rstudioapi)
+library( DuffyTools)
+library( Biostrings)
+library( sangerseqR)
 
 # Preset values for the chromatogram file and gene of interest loaded from the markdown parameters to start
 ab1File <- params$set_file

@@ -12,8 +12,11 @@ title: "Batch Deconvolution of Sanger Chromatograms to Quantify Resistance Mutat
 knitr::opts_chunk$set(echo = FALSE)
 
 # needed packages
-require( rstudioapi)
-require(DuffyTools)
+library( rstudioapi)
+library( DuffyTools)
+library( Biostrings)
+library( sangerseqR)
+
 # allow optional use of DT::datatable instead of default kable.  Comment out at bottom as wanted...
 require(DT)
 
