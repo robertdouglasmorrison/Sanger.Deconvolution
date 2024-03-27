@@ -26,25 +26,25 @@ The script will generate an HTML file of results and images, and a CSV file of t
   
 ### Deconvolution Method
 
-Each mutation motif site of interest will be condoluted by a 3-step process:  
+Each mutation motif site of interest will be deconvoluted by a 3-step process:  
 
 1. Search for the 11aa mutation motif in all 6 possible reading frames of the chromatogram, to find the correct 
-strand orientation and coding reading frame to align the chromatogram with the gene's protein coding sequence.  
+strand orientation and coding reading frame to align the chromatogram with the gene's protein coding sequence. 
 This step will be tolerant of both chromatogram noise and field isolate variation, so rather than expecting a 
 perfect 11aa match, a similarity scoring method is used to find the one best matching location in all 6 reading 
-frames.  If no high scoring match is found, the deconvolution quantification fails for this motif.
+frames. If no high scoring match is found, the deconvolution quantification fails for this motif.
   
 2. Isolate the center 3-nucleotide codon region of the motif, to extract the tiny chromatogram fragment corresponding 
-to the single amino acid of interest.  This holds the raw trace matrix that describes the observed peak shapes and 
-amplitudes in all 4 base call channels over the full period of 3 nucleotide peaks.  As each peak shape is typically 
+to the single amino acid of interest. This now holds the raw trace matrix that describes the observed peak shapes and 
+amplitudes in all 4 base call channels over the full period of 3 nucleotide peaks. As each peak shape is typically 
 measured at about 10 data points per nucleotide, this tiny trace matrix will contain roughly 30 rows by 4 columns of 
 raw intensity call values. This tiny extracted chromatogram trace matrix becomes the observed data for the final 
-peak fitting  step.
+peak fitting step.
   
-3. Perform the deconvolution.  The observed tiny trace matrix is fitted by non-linear regression, using a simulated 
+3. Perform the deconvolution model fitting. The observed tiny trace matrix is fitted by non-linear regression, using a simulated 
 annealing algorithm (R package GenSA), as a weighted sum of all likely codons, where each possible codon is modeled 
-as a tiny trace matrix of 3 gaussian peaks.  The fitting process calculates the relative abundance of all model codon 
-trace matrices that best fits the observed trace matrix.  Lastly, each model codon of non-zero abundance is translated 
+as a tiny trace matrix of 3 gaussian peaks. The fitting process calculates the relative abundance of all model codon 
+trace matrices that best fits the observed trace matrix. Lastly, each model codon of non-zero abundance is translated 
 to its coding amino acid and proportionally summed, to give the final deconvolution result expressed as the relative 
 proportions of one or more amino acids that best describe the observed chromatogram at that protein mutation site.
 
